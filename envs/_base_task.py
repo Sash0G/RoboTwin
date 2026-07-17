@@ -69,7 +69,7 @@ class Base_Task(gym.Env):
         self.dual_arm = kwags.get("dual_arm", True)
         self.eval_mode = kwags.get("eval_mode", False)
 
-        self.need_topp = True  # TODO
+        self.need_topp = False  # TODO
 
         # Random
         random_setting = kwags.get("domain_randomization")
@@ -387,7 +387,6 @@ class Base_Task(gym.Env):
         """
         if not hasattr(self, "robot"):
             self.robot = Robot(self.scene, self.need_topp, **kwags)
-            self.robot.set_planner(self.scene)
             self.robot.init_joints()
         else:
             self.robot.reset(self.scene, self.need_topp, **kwags)
@@ -615,7 +614,9 @@ class Base_Task(gym.Env):
         left_result, right_result = None, None
 
         if set_tag == "left" or set_tag == "together":
-            left_result = self.robot.left_plan_grippers(self.robot.get_left_gripper_val(), left_pos)
+            _left_now, _left_target = self.robot.get_left_gripper_val(), left_pos
+            _left_steps = np.linspace(_left_now, _left_target, 200)
+            left_result = {"num_step": 200, "per_step": (_left_target - _left_now) / 200, "result": _left_steps}
             left_gripper_step = left_result["per_step"]
             left_gripper_res = left_result["result"]
             num_step = left_result["num_step"]
@@ -630,7 +631,9 @@ class Base_Task(gym.Env):
                 return left_result
 
         if set_tag == "right" or set_tag == "together":
-            right_result = self.robot.right_plan_grippers(self.robot.get_right_gripper_val(), right_pos)
+            _right_now, _right_target = self.robot.get_right_gripper_val(), right_pos
+            _right_steps = np.linspace(_right_now, _right_target, 200)
+            right_result = {"num_step": 200, "per_step": (_right_target - _right_now) / 200, "result": _right_steps}
             right_gripper_step = right_result["per_step"]
             right_gripper_res = right_result["result"]
             num_step = right_result["num_step"]
