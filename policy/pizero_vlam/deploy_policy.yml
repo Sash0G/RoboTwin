@@ -1,0 +1,32 @@
+# Basic experiment configuration (consumed by script/eval_policy.py)
+policy_name: pizero_vlam
+task_name: null
+task_config: null
+ckpt_setting: null
+seed: null
+instruction_type: unseen
+
+# --- barrel model ---------------------------------------------------------------------------------
+# Absolute path to a checkpoint file. Its session tree must be laid out as
+#   <session>/checkpoints/<ckpt>.pt  and  <session>/hf_export/<session_id>/src/{configuration,modeling,
+#   processing}_*.py + model_config.yaml
+# (that is what barrel's InferenceExportCallback writes during training). Override on the CLI.
+ckpt_path: null
+
+# Checkout that provides `barrel.core.databib` etc. for the self-contained hf_export model code.
+barrel_root: ~/Documents/GitHub/barrel
+
+device: cuda
+dtype: bfloat16
+dataset_name: robotwin  # selects this dataset's normalizer stats
+
+# Control points consumed from each model query before re-querying. The model's horizon is 5
+# (future_controls_sequence_length: 5 @ 0.2 s stride = 1.0 s), and values above it are rejected
+# rather than clamped. 5 is fully open-loop over the chunk; try 2-3 for tighter closed-loop control
+# at the cost of more inference calls.
+execute_steps: 5
+
+# Leave empty to use barrel's defaults (piper.urdf / link6) -- these MUST match the chain the
+# dataset converter used for FK, or eval is not frame-consistent with training.
+urdf_path: ""
+ee_link_name: ""
