@@ -574,6 +574,29 @@ class Base_Task(gym.Env):
     def _set_eval_video_ffmpeg(self, ffmpeg):
         self.eval_video_ffmpeg = ffmpeg
 
+    # Views tiled left-to-right in the eval video. Cameras absent from the observation (e.g.
+    # collect_wrist_camera: false) are skipped, so the frame size must be derived the same way the
+    # ffmpeg -video_size argument is -- see get_eval_video_size() in script/eval_policy.py.
+    EVAL_VIDEO_CAMERAS = ("head_camera", "left_camera", "right_camera")
+
+    def _eval_video_frame(self):
+        """Head + wrist RGB tiled horizontally, zero-padded to a common height."""
+        views = [
+            self.now_obs["observation"][name]["rgb"] for name in self.EVAL_VIDEO_CAMERAS
+            if name in self.now_obs["observation"] and "rgb" in self.now_obs["observation"][name]
+        ]
+        if len(views) == 1:
+            return views[0]
+        height = max(view.shape[0] for view in views)
+        padded = [
+            view if view.shape[0] == height else np.pad(view, ((0, height - view.shape[0]), (0, 0), (0, 0)))
+            for view in views
+        ]
+        return np.ascontiguousarray(np.hstack(padded))
+
+    def _write_eval_video_frame(self):
+        self.eval_video_ffmpeg.stdin.write(self._eval_video_frame().tobytes())
+
     def close_env(self, clear_cache=False):
         if clear_cache:
             # for actor in self.scene.get_all_actors():
@@ -1485,7 +1508,7 @@ class Base_Task(gym.Env):
 
         eval_video_freq = 1  # fixed
         if (self.eval_video_path is not None and self.take_action_cnt % eval_video_freq == 0):
-            self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
+            self._write_eval_video_frame()
 
         self.take_action_cnt += 1
         print(f"step: \033[92m{self.take_action_cnt} / {self.step_lim}\033[0m", end="\r")
@@ -1661,7 +1684,7 @@ class Base_Task(gym.Env):
                 self.eval_success = True
                 self.get_obs() # update obs
                 if (self.eval_video_path is not None):
-                    self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
+                    self._write_eval_video_frame()
                 return
 
         self._update_render()

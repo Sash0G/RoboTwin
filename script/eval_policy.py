@@ -54,6 +54,20 @@ def get_camera_config(camera_type):
     return args[camera_type]
 
 
+def get_eval_video_size(camera_args):
+    """`WxH` of the tiled eval-video frame.
+
+    Must stay in sync with Base_Task._eval_video_frame(): the same views, in the same order,
+    hstacked and zero-padded to the tallest one.
+    """
+    head = get_camera_config(camera_args["head_camera_type"])
+    sizes = [(head["w"], head["h"])]
+    if camera_args.get("collect_wrist_camera", True):
+        wrist = get_camera_config(camera_args["wrist_camera_type"])
+        sizes += [(wrist["w"], wrist["h"])] * 2  # left + right
+    return f"{sum(w for w, _ in sizes)}x{max(h for _, h in sizes)}"
+
+
 def get_embodiment_config(robot_file):
     robot_config_file = os.path.join(robot_file, "config.yml")
     with open(robot_config_file, "r", encoding="utf-8") as f:
@@ -126,8 +140,7 @@ def main(usr_args):
 
     if args["eval_video_log"]:
         video_save_dir = save_dir
-        camera_config = get_camera_config(args["camera"]["head_camera_type"])
-        video_size = str(camera_config["w"]) + "x" + str(camera_config["h"])
+        video_size = get_eval_video_size(args["camera"])
         video_save_dir.mkdir(parents=True, exist_ok=True)
         args["eval_video_save_dir"] = video_save_dir
 

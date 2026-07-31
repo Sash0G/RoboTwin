@@ -11,11 +11,13 @@ same ``link6`` end-effector, one 6-joint serial chain run once per arm. Keeping 
 what makes eval frame-consistent with training, and is why we go through joint space rather than
 RoboTwin's ``action_type='ee'`` (which expects a pose in the simulator's own frame).
 
-DELTA ANCHORING -- the model is trained with ``delta_controls == False``, so each of the 5 control
-points is a displacement measured from the pose observed *at the moment of the query*, the last one
-being the full 1.0 s displacement. (Hence the ``horizon_1.0s`` control stats and the widened
-+/-[0.12, 0.08, 0.10] m ``translation_control_norm`` bounds in the training config.) All 5 deltas are
-therefore applied to a single pose snapshot taken before the chunk starts executing. Re-reading the
+DELTA ANCHORING -- the training control frames are ``ROBOT_BASE_DELTA`` (translation) and ``EEF_DELTA``
+(rotation), and ``RoboticsDataset`` converts *every* future control point relative to the observation
+pose at a single ``sequence_base_indices`` snapshot -- not step-to-step. So each of the 5 control points
+is a displacement measured from the pose observed at the moment of the query, the last one being the
+full 1.0 s displacement (hence the widened +/-[0.12, 0.08, 0.10] m ``translation_control_norm`` bounds
+in the training config). All 5 deltas are therefore applied to a single pose snapshot taken before the
+chunk starts executing. Re-reading the
 EEF pose on each step and applying that step's delta to it would compound the deltas and overshoot.
 
 The current joints *are* re-read every step, but only to warm-start IK -- that keeps successive
@@ -33,6 +35,14 @@ CAMERA_MAP = {
     "left_camera": "wrist",
     "right_camera": "wrist_right",
 }
+
+# The dataset converter does NOT store the raw FK rotation: `_split_bimanual_ee_pose` runs every
+# per-arm rotation through `rotation_eef_to_base_frame` (barrel .../lerobot/df_utils/df_transform.py),
+# which right-multiplies by this matrix -- the canonical-Franka-EEF -> ROBOT_BASE convention -- before
+# quaternizing. So the pose space the model was trained in is A = R_fk @ M, not R_fk. Both directions
+# have to go through it: the proprio rotation we feed in, and the delta we get back (the rotation delta
+# is EEF-relative, so it is M-conjugated: DR_model = M @ DR_fk @ M). M is its own inverse.
+EEF_TO_BASE_ROTATION = np.diag([1.0, -1.0, -1.0])
 
 
 def _ensure_barrel_importable(barrel_root: str) -> str:
@@ -188,9 +198,10 @@ class PiZeroVLAMPolicy:
         translation, quaternion = [], []
         for arm in range(self.NUM_ARMS):
             translation.append(eef_poses[arm, :3, 3])
+            model_rotation = eef_poses[arm, :3, :3] @ EEF_TO_BASE_ROTATION
             quaternion.append(
                 self._convert_rotation(
-                    self._torch.from_numpy(eef_poses[arm, :3, :3].reshape(1, 9)), self._quaternion
+                    self._torch.from_numpy(model_rotation.reshape(1, 9)), self._quaternion
                 )[0]
                 .cpu()
                 .numpy()
@@ -228,16 +239,20 @@ class PiZeroVLAMPolicy:
         current = self._per_arm_joints(observation)
         qpos = np.zeros(14, dtype=np.float32)
         for arm in range(self.NUM_ARMS):
+            # Apply the delta in the model's pose space (A = R_fk @ M), then map the result back to
+            # the FK frame the IK chain solves in. Translation is stored untransformed by the
+            # converter, so it needs no such round trip.
             target = self._EndEffectorPoseAction(
                 translation=anchor_poses[arm, :3, 3],
-                rotation=anchor_poses[arm, :3, :3],
+                rotation=anchor_poses[arm, :3, :3] @ EEF_TO_BASE_ROTATION,
             ).apply_delta(
                 delta_rotation=control.eef_rotmat[arm, timestep].numpy(),
                 delta_translation=control.eef_translation[arm, timestep].numpy(),
                 delta_mode=self.delta_mode,
             )
+            target_rotation = target.rotation.astype(np.float64) @ EEF_TO_BASE_ROTATION
             pose = self._pose_from_rotmat_translation(
-                self._torch.from_numpy(target.rotation.astype(np.float64)),
+                self._torch.from_numpy(target_rotation),
                 self._torch.from_numpy(target.translation.astype(np.float64)),
             )
             qpos[self.ARM_SLICES[arm]] = (
