@@ -118,6 +118,33 @@ class Robot:
         self.left_entity.set_root_pose(self.left_entity_origion_pose)
         self.right_entity.set_root_pose(self.right_entity_origion_pose)
 
+        # Every qpos action is time-parameterized through these two planners, in
+        # `Base_Task.take_action`. Nothing else creates them, and that call sits inside a bare `except`
+        # whose print is commented out, so when they are missing the arm action is dropped in silence:
+        # the arm holds its previous drive target, only the gripper is driven, and the episode looks
+        # like a policy that decided not to move.
+        if self.need_topp:
+            from .planner import MplibPlanner  # local: planner.py reaches for curobo at import time
+
+            self.left_mplib_planner = MplibPlanner(
+                self.left_urdf_path,
+                self.left_srdf_path,
+                self.left_move_group,
+                self.left_entity_origion_pose,
+                self.left_entity,
+                self.left_planner_type,
+                scene,
+            )
+            self.right_mplib_planner = MplibPlanner(
+                self.right_urdf_path,
+                self.right_srdf_path,
+                self.right_move_group,
+                self.right_entity_origion_pose,
+                self.right_entity,
+                self.right_planner_type,
+                scene,
+            )
+
     def reset(self, scene, need_topp=False, **kwargs):
         self._init_robot_(scene, need_topp, **kwargs)
 

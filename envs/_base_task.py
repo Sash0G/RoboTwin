@@ -69,7 +69,10 @@ class Base_Task(gym.Env):
         self.dual_arm = kwags.get("dual_arm", True)
         self.eval_mode = kwags.get("eval_mode", False)
 
-        self.need_topp = False  # TODO
+        # `take_action`'s qpos path time-parameterizes through the TOPP planners unconditionally, and
+        # this flag is what has `Robot` build them. Left off, every qpos action raises inside a bare
+        # `except` and is dropped, so the arm never moves.
+        self.need_topp = True
 
         # Random
         random_setting = kwags.get("domain_randomization")
