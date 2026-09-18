@@ -32,17 +32,28 @@ parent_directory = os.path.dirname(current_file_path)
 # the expert does not run, so an eval here cannot be lined up with one from another codebase. Every seed
 # in the list is used, in order, including ones the expert fails.
 #
-# The `random` module the instruction templates go through is seeded per episode, at the draw below.
+# The instruction can be supplied per seed, as a second column in the seed file. The expert pass is then
+# skipped, since filling a template is all it was being run for here. That is worth having because the
+# expert needs a planner, and a tree whose `Robot` never sets one up cannot run it at all. Without a
+# second column the expert runs as stock, and the `random` module the templates go through is seeded per
+# episode so the phrasing is reproducible from the seed.
 #
-# Everything else -- the real expert pass, the planner, the draw itself, the rollout -- is untouched.
+# The inference path -- get_model, reset_model, eval, get_obs, take_action, step_lim -- is untouched.
 
 
-def read_seeds(path):
+def read_episodes(path):
+    """`[(seed, instruction or None), ...]` from a file of `seed` or `seed<TAB>instruction` lines."""
+    episodes = []
     with open(path, "r", encoding="utf-8") as f:
-        seeds = [int(token) for token in f.read().replace(",", " ").split()]
-    if not seeds:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            seed, tab, instruction = line.partition("\t")
+            episodes.append((int(seed.strip()), instruction.strip() if tab else None))
+    if not episodes:
         raise SystemExit(f"No seeds in {path}")
-    return seeds
+    return episodes
 
 
 def class_decorator(task_name):
@@ -188,8 +199,10 @@ def main(usr_args):
     usr_args["left_arm_dim"] = len(args["left_embodiment_config"]["arm_joints_name"][0])
     usr_args["right_arm_dim"] = len(args["right_embodiment_config"]["arm_joints_name"][1])
 
-    seeds = read_seeds(usr_args["seed_list"])
-    print("\033[95mSeeds:\033[0m " + ", ".join(str(seed) for seed in seeds))
+    episodes = read_episodes(usr_args["seed_list"])
+    print("\033[95mSeeds:\033[0m " + ", ".join(str(seed) for seed, _ in episodes))
+    if all(instruction for _, instruction in episodes):
+        print("\033[95mInstructions:\033[0m supplied per seed, the expert pass is skipped")
 
     # Stock eval_policy's `test_num` is both the episode count and the size of the description pool a
     # phrasing is drawn from. The episode count now comes from the seed list, so this is only the pool,
@@ -201,7 +214,7 @@ def main(usr_args):
                                   TASK_ENV,
                                   args,
                                   model,
-                                  seeds,
+                                  episodes,
                                   test_num=test_num,
                                   video_size=video_size,
                                   instruction_type=instruction_type)
@@ -223,7 +236,7 @@ def eval_policy(task_name,
                 TASK_ENV,
                 args,
                 model,
-                seeds,
+                episodes,
                 test_num=100,
                 video_size=None,
                 instruction_type=None):
@@ -245,14 +258,15 @@ def eval_policy(task_name,
 
     args["eval_mode"] = True
 
-    for now_id, now_seed in enumerate(seeds):
+    for now_id, (now_seed, given_instruction) in enumerate(episodes):
         render_freq = args["render_freq"]
         args["render_freq"] = 0
 
         # The expert pass runs as it does stock, since the instruction is filled from what it returns.
         # Stock, its verdict also picks the seed and a failure moves to the next one; here the seed is
-        # given, so a failure is reported and the policy is evaluated on that scene anyway.
-        if expert_check:
+        # given, so a failure is reported and the policy is evaluated on that scene anyway. A supplied
+        # instruction removes the reason to run it, and with it the planner the expert needs.
+        if expert_check and given_instruction is None:
             try:
                 TASK_ENV.setup_demo(now_ep_num=now_id, seed=now_seed, is_test=True, **args)
                 episode_info = TASK_ENV.play_once()
@@ -270,14 +284,17 @@ def eval_policy(task_name,
         args["render_freq"] = render_freq
 
         TASK_ENV.setup_demo(now_ep_num=now_id, seed=now_seed, is_test=True, **args)
-        episode_info_list = [episode_info["info"]]
-        # Stock leaves `random` unseeded, so which phrasing gets filled in is not reproducible between
-        # two runs of the same seed, here or anywhere else. Seeding it from the episode seed makes the
-        # instruction a function of the seed, like the scene already is, so a run can be lined up with
-        # one from another codebase. The draw itself is untouched.
-        random.seed(now_seed)
-        results = generate_episode_descriptions(args["task_name"], episode_info_list, test_num)
-        instruction = np.random.choice(results[0][instruction_type])
+        if given_instruction is not None:
+            instruction = given_instruction
+        else:
+            episode_info_list = [episode_info["info"]]
+            # Stock leaves `random` unseeded, so which phrasing gets filled in is not reproducible
+            # between two runs of the same seed, here or anywhere else. Seeding it from the episode seed
+            # makes the instruction a function of the seed, like the scene already is, so a run can be
+            # lined up with one from another codebase. The draw itself is untouched.
+            random.seed(now_seed)
+            results = generate_episode_descriptions(args["task_name"], episode_info_list, test_num)
+            instruction = np.random.choice(results[0][instruction_type])
         TASK_ENV.set_instruction(instruction=instruction)  # set language instruction
 
         if TASK_ENV.eval_video_path is not None:
