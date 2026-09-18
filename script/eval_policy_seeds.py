@@ -31,6 +31,11 @@ from envs import CONFIGS_PATH
 from envs.utils.create_actor import UnStableError
 from generate_episode_instructions import generate_episode_descriptions
 
+# The eval video tiles head + wrist views (`Base_Task._eval_video_frame`), so its `-video_size` is wider
+# than the head camera. Taken from `eval_policy.py` rather than recomputed, so the two cannot drift: a
+# size that disagrees with the frame shears every row and inflates the frame count.
+from eval_policy import get_eval_video_size
+
 # Mirrors barrel's `instructions.INSTRUCTION_POOL_SIZE`.
 INSTRUCTION_POOL_SIZE = 100
 _PLANNED = {"status": "Success", "position": [None]}
@@ -52,12 +57,6 @@ def eval_function_decorator(policy_name, model_name):
     return getattr(policy_model, model_name)
 
 
-def get_camera_config(camera_type):
-    camera_config_path = os.path.join(parent_directory, "../task_config/_camera_config.yml")
-    with open(camera_config_path, "r", encoding="utf-8") as f:
-        args = yaml.load(f.read(), Loader=yaml.FullLoader)
-    assert camera_type in args, f"camera {camera_type} is not defined"
-    return args[camera_type]
 
 
 def read_seeds(path: str) -> List[int]:
@@ -271,8 +270,7 @@ def main(usr_args):
 
     video_size = None
     if args["eval_video_log"]:
-        camera_config = get_camera_config(args["camera"]["head_camera_type"])
-        video_size = str(camera_config["w"]) + "x" + str(camera_config["h"])
+        video_size = get_eval_video_size(args["camera"])
         args["eval_video_save_dir"] = save_dir
 
     print("============= Config =============\n")
