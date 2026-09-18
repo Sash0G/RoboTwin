@@ -1,5 +1,6 @@
 import sys
 import os
+import random
 import subprocess
 
 sys.path.append("./")
@@ -24,11 +25,16 @@ from generate_episode_instructions import *
 current_file_path = os.path.abspath(__file__)
 parent_directory = os.path.dirname(current_file_path)
 
-# `eval_policy.py`, with one change: the seeds come from a file instead of being derived. Stock, they
-# start at `100000 * (1 + seed)` and walk forward keeping only the ones whose scene the expert solves,
-# which cannot be reproduced anywhere the expert does not run, so an eval here cannot be lined up with
-# one from another codebase. Every seed in the list is used, in order, including ones the expert fails.
-# Everything else -- the real expert pass, the planner, the instruction draw, the rollout -- is untouched.
+# `eval_policy.py`, with two changes, both of them about making a run reproducible from a seed.
+#
+# The seeds come from a file instead of being derived. Stock, they start at `100000 * (1 + seed)` and
+# walk forward keeping only the ones whose scene the expert solves, which cannot be reproduced anywhere
+# the expert does not run, so an eval here cannot be lined up with one from another codebase. Every seed
+# in the list is used, in order, including ones the expert fails.
+#
+# The `random` module the instruction templates go through is seeded per episode, at the draw below.
+#
+# Everything else -- the real expert pass, the planner, the draw itself, the rollout -- is untouched.
 
 
 def read_seeds(path):
@@ -265,6 +271,11 @@ def eval_policy(task_name,
 
         TASK_ENV.setup_demo(now_ep_num=now_id, seed=now_seed, is_test=True, **args)
         episode_info_list = [episode_info["info"]]
+        # Stock leaves `random` unseeded, so which phrasing gets filled in is not reproducible between
+        # two runs of the same seed, here or anywhere else. Seeding it from the episode seed makes the
+        # instruction a function of the seed, like the scene already is, so a run can be lined up with
+        # one from another codebase. The draw itself is untouched.
+        random.seed(now_seed)
         results = generate_episode_descriptions(args["task_name"], episode_info_list, test_num)
         instruction = np.random.choice(results[0][instruction_type])
         TASK_ENV.set_instruction(instruction=instruction)  # set language instruction
